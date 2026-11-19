@@ -1,0 +1,649 @@
+-- ==========================================.txt
+-- ==========================================
+-- MASTER SCRIPT v11 - CHAMS NOTIF RESTORED
+-- ==========================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- Remotes
+local Event = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Combat"):WaitForChild("RequestMeleeHits")
+local PickupEvent = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Inventory"):WaitForChild("RequestPickupItem")
+local FarmingRemotes = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Farming")
+local WaterEvent = FarmingRemotes:WaitForChild("RequestWater")
+local HarvestAOE = FarmingRemotes:WaitForChild("RequestHarvestAOE")
+local RefillEvent = FarmingRemotes:WaitForChild("RequestRefill")
+local LivestockRemotes = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Livestock")
+local RequestFeed = LivestockRemotes:WaitForChild("RequestFeed")
+local RequestCollect = LivestockRemotes:WaitForChild("RequestCollect")
+local TeleportEvent = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("World"):WaitForChild("Teleport")
+
+local GUI_DISPLAY_ORDER = 1
+
+-- ==========================================
+-- HELPER: BIKIN TOMBOL BULAT
+-- ==========================================
+
+local function createToggleButton(screenName, x, y, size, text, bgColor, strokeColor, onClick)
+    local old = PlayerGui:FindFirstChild(screenName)
+    if old then old:Destroy() end
+    
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = screenName
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.IgnoreGuiInset = true
+    ScreenGui.DisplayOrder = GUI_DISPLAY_ORDER
+    ScreenGui.Parent = PlayerGui
+    
+    local Container = Instance.new("Frame")
+    Container.Size = UDim2.new(0, size, 0, size)
+    Container.Position = UDim2.new(0, x, 0, y)
+    Container.BackgroundTransparency = 1
+    Container.Active = false
+    Container.Parent = ScreenGui
+    
+    local Circle = Instance.new("TextButton")
+    Circle.Size = UDim2.new(1, 0, 1, 0)
+    Circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Circle.BackgroundTransparency = 0.85
+    Circle.BorderSizePixel = 0
+    Circle.Text = text
+    Circle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Circle.TextTransparency = 0.7
+    Circle.Font = Enum.Font.SourceSansBold
+    Circle.TextSize = size > 50 and 28 or 22
+    Circle.AutoButtonColor = false
+    Circle.Parent = Container
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = Circle
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Thickness = 2
+    stroke.Transparency = 0.85
+    stroke.Parent = Circle
+    
+    local statusDot = Instance.new("Frame")
+    statusDot.Size = UDim2.new(0, size > 50 and 12 or 10, 0, size > 50 and 12 or 10)
+    statusDot.Position = UDim2.new(1, size > 50 and -14 or -12, 0, 2)
+    statusDot.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+    statusDot.BorderSizePixel = 0
+    statusDot.Parent = Container
+    local dotCorner = Instance.new("UICorner") dotCorner.CornerRadius = UDim.new(1, 0) dotCorner.Parent = statusDot
+    
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Size = UDim2.new(0, 120, 0, 14)
+    infoLabel.Position = UDim2.new(0, -30, 1, 2)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Text = ""
+    infoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    infoLabel.Font = Enum.Font.SourceSansBold
+    infoLabel.TextSize = 9
+    infoLabel.TextStrokeTransparency = 0.5
+    infoLabel.Parent = Container
+    
+    Circle.MouseButton1Click:Connect(onClick)
+    return { Circle = Circle, Stroke = stroke, StatusDot = statusDot, InfoLabel = infoLabel, BGColor = bgColor, StrokeColor = strokeColor }
+end
+
+local function updateToggleVisual(btn, enabled)
+    if enabled then
+        btn.Circle.BackgroundColor3 = btn.BGColor
+        btn.Circle.BackgroundTransparency = 0.15
+        btn.Circle.TextTransparency = 0
+        btn.Stroke.Color = btn.StrokeColor
+        btn.Stroke.Transparency = 0
+        btn.StatusDot.BackgroundColor3 = btn.StrokeColor
+    else
+        btn.Circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Circle.BackgroundTransparency = 0.85
+        btn.Circle.TextTransparency = 0.7
+        btn.Stroke.Color = Color3.fromRGB(255, 255, 255)
+        btn.Stroke.Transparency = 0.85
+        btn.StatusDot.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+    end
+end
+
+-- ==========================================
+-- BAGIAN 1: AURA KILL
+-- ==========================================
+
+local AURA_CONFIG = {ScanRadius = 30, AttackInterval = 0.05, Enabled = false}
+local function attackLoop()
+    task.spawn(function()
+        while AURA_CONFIG.Enabled do
+            local ids = {}
+            local Active = Workspace:FindFirstChild("Mobs") and Workspace.Mobs:FindFirstChild("Active")
+            local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if Active and root then
+                for _, wrapper in pairs(Active:GetChildren()) do
+                    if wrapper:IsA("Model") then
+                        local hum = wrapper:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            local mRoot = wrapper:FindFirstChild("HumanoidRootPart")
+                            if mRoot and (mRoot.Position - root.Position).Magnitude <= AURA_CONFIG.ScanRadius then
+                                local id = wrapper:GetAttribute("EntityId")
+                                if id then table.insert(ids, id) end
+                            end
+                        end
+                    end
+                end
+            end
+            if #ids > 0 then pcall(function() Event:FireServer(ids, ids) end) end
+            task.wait(AURA_CONFIG.AttackInterval)
+        end
+    end)
+end
+local AuraBtn = createToggleButton("AuraButton", 784, 189, 60, "⚔", Color3.fromRGB(0, 200, 0), Color3.fromRGB(0, 255, 0), function()
+    AURA_CONFIG.Enabled = not AURA_CONFIG.Enabled
+    if AURA_CONFIG.Enabled then attackLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(AuraBtn, AURA_CONFIG.Enabled) end)
+
+-- ==========================================
+-- BAGIAN 2: AUTO-PICKUP
+-- ==========================================
+
+local PICKUP_CONFIG = {ScanRadius = 11, PickupInterval = 0.1, Enabled = false}
+local function pickupLoop()
+    task.spawn(function()
+        while PICKUP_CONFIG.Enabled do
+            local WorldItems = Workspace:FindFirstChild("WorldItems")
+            local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if WorldItems and root then
+                for _, item in pairs(WorldItems:GetChildren()) do
+                    local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
+                    if part and (part.Position - root.Position).Magnitude <= PICKUP_CONFIG.ScanRadius then
+                        local pId = item:GetAttribute("PickupId")
+                        if not pId then
+                            for _, c in pairs(item:GetDescendants()) do
+                                if c:IsA("StringValue") and c.Value:find("^pickup_") then pId = c.Value break end
+                            end
+                        end
+                        if pId then
+                            pcall(function() PickupEvent:FireServer({pickupId = pId}) end)
+                            task.wait(PICKUP_CONFIG.PickupInterval)
+                        end
+                    end
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+end
+local PickupBtn = createToggleButton("AutoPickupButton", 269, 18, 45, "🎁", Color3.fromRGB(255, 180, 0), Color3.fromRGB(255, 220, 0), function()
+    PICKUP_CONFIG.Enabled = not PICKUP_CONFIG.Enabled
+    if PICKUP_CONFIG.Enabled then pickupLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(PickupBtn, PICKUP_CONFIG.Enabled) end)
+
+-- ==========================================
+-- BAGIAN 3: MEGA TOOLS
+-- ==========================================
+
+local MEGA_CONFIG = {Enabled = false}
+local tpwalking, brightLoop
+local function toggleMega()
+    MEGA_CONFIG.Enabled = not MEGA_CONFIG.Enabled
+    if MEGA_CONFIG.Enabled then
+        if not brightLoop then brightLoop = RunService.RenderStepped:Connect(function() Lighting.Brightness = 2 Lighting.ClockTime = 14 Lighting.FogEnd = 100000 Lighting.GlobalShadows = false end) end
+        if not tpwalking then tpwalking = RunService.Heartbeat:Connect(function(delta) local char = player.Character local hum = char and char:FindFirstChildWhichIsA("Humanoid") if hum and hum.MoveDirection.Magnitude > 0 then char:TranslateBy(hum.MoveDirection * 1 * delta * 10) end end) end
+    else
+        if brightLoop then brightLoop:Disconnect() brightLoop = nil end
+        if tpwalking then tpwalking:Disconnect() tpwalking = nil end
+        Lighting.Brightness = 1 Lighting.ClockTime = 14 Lighting.FogEnd = 100000 Lighting.GlobalShadows = true
+    end
+end
+local MegaBtn = createToggleButton("MegaButton", 340, 21, 45, "⚡", Color3.fromRGB(100, 100, 255), Color3.fromRGB(150, 150, 255), toggleMega)
+RunService.RenderStepped:Connect(function() updateToggleVisual(MegaBtn, MEGA_CONFIG.Enabled) end)
+
+-- ==========================================
+-- BAGIAN 4: PROXIMITY CHAMS (HIJAU) + NOTIFIKASI
+-- ==========================================
+
+local CHAMS_CONFIG = {Enabled = false, ProximityDistance = 100, NotifDuration = 3}
+local chamsHolders, alertedPlayers, chamsConnections = {}, {}, {}
+
+-- ⭐ SETUP UI NOTIFIKASI
+local notifGui = Instance.new("ScreenGui")
+notifGui.Name = "ProxNotifGui" 
+notifGui.ResetOnSpawn = false 
+notifGui.IgnoreGuiInset = true
+notifGui.DisplayOrder = GUI_DISPLAY_ORDER 
+notifGui.Parent = PlayerGui
+
+local notifFrame = Instance.new("Frame")
+notifFrame.Size = UDim2.new(0, 260, 0, 55)
+notifFrame.Position = UDim2.new(0, -280, 0, 100)
+notifFrame.BackgroundColor3 = Color3.fromRGB(30, 180, 30) -- Hijau
+notifFrame.BorderSizePixel = 0 
+notifFrame.Parent = notifGui
+local nc = Instance.new("UICorner") nc.CornerRadius = UDim.new(0, 8) nc.Parent = notifFrame
+local ns = Instance.new("UIStroke") ns.Color = Color3.fromRGB(100, 255, 100) ns.Thickness = 2 ns.Parent = notifFrame
+
+local notifIcon = Instance.new("TextLabel")
+notifIcon.Size = UDim2.new(0, 40, 1, 0) 
+notifIcon.Position = UDim2.new(0, 5, 0, 0)
+notifIcon.BackgroundTransparency = 1 
+notifIcon.Text = "⚠️"
+notifIcon.TextColor3 = Color3.fromRGB(255, 255, 255) 
+notifIcon.Font = Enum.Font.SourceSansBold
+notifIcon.TextSize = 28 
+notifIcon.Parent = notifFrame
+
+local notifTitle = Instance.new("TextLabel")
+notifTitle.Size = UDim2.new(1, -50, 0, 22) 
+notifTitle.Position = UDim2.new(0, 45, 0, 6)
+notifTitle.BackgroundTransparency = 1 
+notifTitle.Text = "PLAYER MENDEKAT"
+notifTitle.TextColor3 = Color3.fromRGB(220, 255, 220) 
+notifTitle.Font = Enum.Font.SourceSansBold
+notifTitle.TextSize = 13 
+notifTitle.TextXAlignment = Enum.TextXAlignment.Left 
+notifTitle.Parent = notifFrame
+
+local notifText = Instance.new("TextLabel")
+notifText.Size = UDim2.new(1, -50, 0, 22) 
+notifText.Position = UDim2.new(0, 45, 0, 28)
+notifText.BackgroundTransparency = 1 
+notifText.Text = ""
+notifText.TextColor3 = Color3.fromRGB(255, 255, 255) 
+notifText.Font = Enum.Font.SourceSans
+notifText.TextSize = 13 
+notifText.TextXAlignment = Enum.TextXAlignment.Left 
+notifText.Parent = notifFrame
+
+local notifQueue, notifActive = {}, false
+
+-- ⭐ SETUP SUARA BEEP
+local beepSound = Instance.new("Sound")
+beepSound.SoundId = "rbxassetid://9046863579"
+beepSound.Volume = 0.5
+beepSound.Parent = SoundService
+local lastBeepTime = 0
+
+local function playBeep()
+    if tick() - lastBeepTime < 1.5 then return end
+    lastBeepTime = tick()
+    pcall(function()
+        beepSound:Stop()
+        beepSound:Play()
+    end)
+end
+
+local function slideInNotif(playerName, distance)
+    notifText.Text = string.format("%s — %d studs", playerName, math.floor(distance))
+    TweenService:Create(notifFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0, 20, 0, 100)
+    }):Play()
+    
+    task.delay(CHAMS_CONFIG.NotifDuration, function()
+        TweenService:Create(notifFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Position = UDim2.new(0, -280, 0, 100)
+        }):Play()
+        task.wait(0.4) 
+        notifActive = false
+        if #notifQueue > 0 then
+            local n = table.remove(notifQueue, 1)
+            notifActive = true 
+            slideInNotif(n.name, n.dist)
+        end
+    end)
+end
+
+local function showNotif(n, d)
+    if notifActive then 
+        table.insert(notifQueue, {name=n, dist=d})
+    else 
+        notifActive = true 
+        slideInNotif(n, d) 
+    end
+end
+
+-- ⭐ SETUP CHAMS & LOOP
+local function getChamsRoot(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+end
+
+local function createChamsForPlayer(target)
+    if target == player or chamsHolders[target] then return end
+    local holder = Instance.new("Folder")
+    holder.Name = "ProxChams_" .. target.Name
+    holder.Parent = PlayerGui
+    chamsHolders[target] = holder
+    
+    local function buildChams()
+        for _, v in ipairs(holder:GetChildren()) do v:Destroy() end
+        local char = target.Character
+        if not char then return end
+        
+        -- Kotak Hijau Tembus Pandang
+        for _, part in ipairs(char:GetChildren()) do
+            if part:IsA("BasePart") then
+                local a = Instance.new("BoxHandleAdornment")
+                a.Adornee = part a.AlwaysOnTop = true a.ZIndex = 5
+                a.Size = part.Size a.Transparency = 0.4
+                a.Color = BrickColor.new(Color3.fromRGB(0, 255, 100)) 
+                a.Parent = holder
+            end
+        end
+        
+        -- Nama Player
+        local head = char:FindFirstChild("Head")
+        if head then
+            local billboard = Instance.new("BillboardGui")
+            billboard.Adornee = head billboard.Size = UDim2.new(0, 120, 0, 20)
+            billboard.StudsOffset = Vector3.new(0, 2.5, 0) billboard.AlwaysOnTop = true 
+            billboard.Parent = holder
+            
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.Size = UDim2.new(1, 0, 1, 0) nameLabel.BackgroundTransparency = 1
+            nameLabel.Text = target.Name nameLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+            nameLabel.TextStrokeTransparency = 0 nameLabel.Font = Enum.Font.SourceSansBold
+            nameLabel.TextSize = 14 nameLabel.Parent = billboard
+        end
+    end
+    
+    buildChams()
+    local conn = target.CharacterAdded:Connect(function()
+        task.wait(0.5) if CHAMS_CONFIG.Enabled then buildChams() end
+    end)
+    chamsConnections[target] = chamsConnections[target] or {}
+    table.insert(chamsConnections[target], conn)
+end
+
+local function removeChamsForPlayer(target)
+    if chamsHolders[target] then chamsHolders[target]:Destroy() chamsHolders[target] = nil end
+    if chamsConnections[target] then
+        for _, conn in ipairs(chamsConnections[target]) do pcall(function() conn:Disconnect() end) end
+        chamsConnections[target] = nil
+    end
+end
+
+local function startProximityLoop()
+    task.spawn(function()
+        while CHAMS_CONFIG.Enabled do
+            local char = player.Character
+            local myRoot = char and getChamsRoot(char)
+            if myRoot then
+                for _, target in ipairs(Players:GetPlayers()) do
+                    if target ~= player then
+                        local tc = target.Character
+                        local tr = tc and getChamsRoot(tc)
+                        if tr then
+                            local dist = (tr.Position - myRoot.Position).Magnitude
+                            if dist <= CHAMS_CONFIG.ProximityDistance then
+                                if not alertedPlayers[target] then
+                                    alertedPlayers[target] = true
+                                    playBeep()              -- ⭐ Beep
+                                    showNotif(target.Name, dist) -- ⭐ Notif
+                                end
+                            else
+                                if alertedPlayers[target] then alertedPlayers[target] = nil end
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.3)
+        end
+    end)
+end
+
+local function toggleChams()
+    CHAMS_CONFIG.Enabled = not CHAMS_CONFIG.Enabled
+    if CHAMS_CONFIG.Enabled then
+        for _, t in ipairs(Players:GetPlayers()) do
+            if t ~= player then createChamsForPlayer(t) end
+        end
+        startProximityLoop()
+    else
+        for t, _ in pairs(chamsHolders) do removeChamsForPlayer(t) end
+        chamsHolders = {} alertedPlayers = {} notifQueue = {}
+    end
+end
+
+Players.PlayerAdded:Connect(function(t)
+    if CHAMS_CONFIG.Enabled then task.wait(1) createChamsForPlayer(t) end
+end)
+Players.PlayerRemoving:Connect(function(t)
+    removeChamsForPlayer(t) alertedPlayers[t] = nil
+end)
+
+local ChamsBtn = createToggleButton("ProxChamsButton", 216, 18, 45, "👁️", Color3.fromRGB(0, 200, 50), Color3.fromRGB(0, 255, 100), toggleChams)
+RunService.RenderStepped:Connect(function() updateToggleVisual(ChamsBtn, CHAMS_CONFIG.Enabled) end)
+
+-- ==========================================
+-- BAGIAN 5: AURA HARVEST (30s) & WATER
+-- ==========================================
+
+local HARVEST_CONFIG = {Enabled = false, Interval = 30}
+local function harvestLoop()
+    task.spawn(function()
+        while HARVEST_CONFIG.Enabled do
+            local soils = {}
+            for _, f in pairs(Workspace:GetChildren()) do
+                if f.Name:find("FarmSoils_Plot") then
+                    for _, s in pairs(f:GetChildren()) do
+                        if s:IsA("Model") and s.Name:find("^soil_") and ((s:GetAttribute("Phase") or 0) >= 3 or (s:GetAttribute("CropPhaseIndex") or 0) >= 3) then
+                            table.insert(soils, s:GetAttribute("SoilId") or s.Name)
+                        end
+                    end
+                end
+            end
+            if #soils > 0 then pcall(function() HarvestAOE:FireServer({SoilIds = soils}) end) end
+            task.wait(HARVEST_CONFIG.Interval)
+        end
+    end)
+end
+local HarvestBtn = createToggleButton("AuraHarvestButton", 3, 152, 42, "🌾", Color3.fromRGB(0, 255, 100), Color3.fromRGB(100, 255, 150), function()
+    HARVEST_CONFIG.Enabled = not HARVEST_CONFIG.Enabled
+    if HARVEST_CONFIG.Enabled then harvestLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(HarvestBtn, HARVEST_CONFIG.Enabled) end)
+
+local WATER_CONFIG = {Enabled = false}
+local function waterLoop()
+    task.spawn(function()
+        pcall(function() RefillEvent:FireServer() end)
+        while WATER_CONFIG.Enabled do
+            local soils = {}
+            for _, f in pairs(Workspace:GetChildren()) do
+                if f.Name:find("FarmSoils_Plot") then
+                    for _, s in pairs(f:GetChildren()) do
+                        if s:IsA("Model") and s.Name:find("^soil_") and s:GetAttribute("Watered") == false then
+                            table.insert(soils, s:GetAttribute("SoilId") or s.Name)
+                        end
+                    end
+                end
+            end
+            for _, id in ipairs(soils) do
+                pcall(function() WaterEvent:FireServer({SoilId = id}) end)
+                task.wait(0.1)
+            end
+            task.wait(0.5)
+        end
+    end)
+end
+local WaterBtn = createToggleButton("AuraWaterButton", 3, 199, 42, "💧", Color3.fromRGB(50, 150, 255), Color3.fromRGB(100, 200, 255), function()
+    WATER_CONFIG.Enabled = not WATER_CONFIG.Enabled
+    if WATER_CONFIG.Enabled then waterLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(WaterBtn, WATER_CONFIG.Enabled) end)
+
+-- ==========================================
+-- BAGIAN 6: LIVESTOCK (SHEAR, MILK, DIG, FEED)
+-- ==========================================
+
+local function scanLivestock()
+    local result = {}
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then return result end
+    for _, plot in ipairs(plots:GetChildren()) do
+        if plot.Name:match("^Plot_%d+$") then
+            local placedItems = plot:FindFirstChild("PlacedItems")
+            if placedItems then
+                for _, deco in ipairs(placedItems:GetChildren()) do
+                    if deco.Name:find("AnimalPen") or deco.Name:find("AnimalPlot") then
+                        local ownerId = deco:GetAttribute("OwnerId")
+                        local slotId = deco:GetAttribute("SlotId")
+                        if tonumber(ownerId) == player.UserId and slotId then
+                            local visuals = deco:FindFirstChild("LivestockVisuals")
+                            if visuals then
+                                for _, animal in ipairs(visuals:GetChildren()) do
+                                    if animal:IsA("Model") then
+                                        local uuid = animal:GetAttribute("AnimalUniqueId") or animal.Name:match("([%x%-]+)$")
+                                        local itemId = animal:GetAttribute("ItemId") or animal.Name
+                                        if uuid then
+                                            table.insert(result, {SlotId = tostring(slotId), AnimalUniqueId = uuid, Name = animal.Name, ItemId = itemId:lower()})
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return result
+end
+
+local shearEnabled = false
+local function shearLoop()
+    task.spawn(function()
+        while shearEnabled do
+            for _, a in ipairs(scanLivestock()) do
+                if not shearEnabled then break end
+                if a.ItemId:find("sheep") or a.Name:lower():find("sheep") then
+                    pcall(function() RequestCollect:FireServer({SlotId = a.SlotId, AnimalUniqueId = a.AnimalUniqueId}) end)
+                    task.wait(0.3)
+                end
+            end
+            task.wait(3)
+        end
+    end)
+end
+local ShearBtn = createToggleButton("AuraShearButton", 53, 152, 42, "🐑", Color3.fromRGB(150, 100, 50), Color3.fromRGB(200, 150, 100), function()
+    shearEnabled = not shearEnabled
+    if shearEnabled then shearLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(ShearBtn, shearEnabled) end)
+
+local milkEnabled = false
+local function milkLoop()
+    task.spawn(function()
+        while milkEnabled do
+            for _, a in ipairs(scanLivestock()) do
+                if not milkEnabled then break end
+                if a.ItemId:find("cow") or a.Name:lower():find("cow") then
+                    pcall(function() RequestCollect:FireServer({SlotId = a.SlotId, AnimalUniqueId = a.AnimalUniqueId}) end)
+                    task.wait(0.3)
+                end
+            end
+            task.wait(3)
+        end
+    end)
+end
+local MilkBtn = createToggleButton("AuraMilkButton", 53, 199, 42, "🐄", Color3.fromRGB(200, 200, 220), Color3.fromRGB(240, 240, 255), function()
+    milkEnabled = not milkEnabled
+    if milkEnabled then milkLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(MilkBtn, milkEnabled) end)
+
+local DIG_CONFIG = {Enabled = false}
+local function digLoop()
+    task.spawn(function()
+        while DIG_CONFIG.Enabled do
+            for _, a in ipairs(scanLivestock()) do
+                if not DIG_CONFIG.Enabled then break end
+                if a.ItemId:find("pig") or a.Name:lower():find("pig") then
+                    pcall(function() RequestCollect:FireServer({SlotId = a.SlotId, AnimalUniqueId = a.AnimalUniqueId}) end)
+                    task.wait(0.3)
+                end
+            end
+            task.wait(3)
+        end
+    end)
+end
+local DigBtn = createToggleButton("AutoDigButton", 53, 246, 42, "🥕", Color3.fromRGB(255, 150, 50), Color3.fromRGB(255, 200, 100), function()
+    DIG_CONFIG.Enabled = not DIG_CONFIG.Enabled
+    if DIG_CONFIG.Enabled then digLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(DigBtn, DIG_CONFIG.Enabled) end)
+
+local FEED_CONFIG = {Enabled = false}
+local function feedLoop()
+    task.spawn(function()
+        while FEED_CONFIG.Enabled do
+            local fedSlots = {}
+            for _, a in ipairs(scanLivestock()) do
+                if not FEED_CONFIG.Enabled then break end
+                if not fedSlots[a.SlotId] then
+                    fedSlots[a.SlotId] = true
+                    pcall(function() RequestFeed:FireServer({SlotId = a.SlotId, FeedItemId = "Feed_Hay"}) end)
+                    task.wait(0.3)
+                end
+            end
+            task.wait(5)
+        end
+    end)
+end
+local FeedBtn = createToggleButton("AuraFeedButton", 3, 246, 42, "🍎", Color3.fromRGB(200, 50, 50), Color3.fromRGB(255, 100, 100), function()
+    FEED_CONFIG.Enabled = not FEED_CONFIG.Enabled
+    if FEED_CONFIG.Enabled then feedLoop() end
+end)
+RunService.RenderStepped:Connect(function() updateToggleVisual(FeedBtn, FEED_CONFIG.Enabled) end)
+
+-- ==========================================
+-- BAGIAN 7: TELEPORT
+-- ==========================================
+
+local TELEPORT_LOCATIONS = {
+    {Name = "Dewdrop", Destination = "DewdropVillage"}
+}
+
+for i, loc in ipairs(TELEPORT_LOCATIONS) do
+    local btnY = 246 + (i * 47) 
+    local TeleportBtn = createToggleButton(
+        "TP_" .. loc.Destination, 
+        3, btnY, 42, 
+        "✈️", 
+        Color3.fromRGB(200, 50, 200), Color3.fromRGB(255, 100, 255), 
+        function()
+            TeleportBtn.Circle.BackgroundTransparency = 0.1
+            task.wait(0.1)
+            TeleportBtn.Circle.BackgroundTransparency = 0.3
+            print("[Teleport] ✈️ Menuju: " .. loc.Destination)
+            pcall(function() TeleportEvent:FireServer({Destination = loc.Destination}) end)
+        end
+    )
+    TeleportBtn.InfoLabel.Text = loc.Name
+    TeleportBtn.Circle.BackgroundColor3 = Color3.fromRGB(200, 50, 200)
+    TeleportBtn.Circle.BackgroundTransparency = 0.3
+    TeleportBtn.Stroke.Color = Color3.fromRGB(255, 100, 255)
+    TeleportBtn.Stroke.Transparency = 0.2
+end
+
+-- ==========================================
+-- START MESSAGE
+-- ==========================================
+print("════════════════════════════════════════════════")
+print("  🎮 MASTER SCRIPT v11 - CHAMS NOTIF RESTORED")
+print("════════════════════════════════════════════════")
+print("")
+print("🔧 Perbaikan:")
+print("  ✅ Chams HIJAU + Notif Popup + Suara Beep")
+print("  ✅ Teleport, Farm, Livestock tetap berfungsi")
+print("════════════════════════════════════════════════")
