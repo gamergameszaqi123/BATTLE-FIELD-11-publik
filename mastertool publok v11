@@ -1,6 +1,5 @@
--- ==========================================.txt
 -- ==========================================
--- MASTER SCRIPT v11 - CHAMS NOTIF RESTORED
+-- MASTER SCRIPT v12 - WATER REFILL PER 20x
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -425,7 +424,7 @@ local ChamsBtn = createToggleButton("ProxChamsButton", 216, 18, 45, "👁️", C
 RunService.RenderStepped:Connect(function() updateToggleVisual(ChamsBtn, CHAMS_CONFIG.Enabled) end)
 
 -- ==========================================
--- BAGIAN 5: AURA HARVEST (30s) & WATER
+-- BAGIAN 5A: AURA HARVEST (30s)
 -- ==========================================
 
 local HARVEST_CONFIG = {Enabled = false, Interval = 30}
@@ -453,33 +452,94 @@ local HarvestBtn = createToggleButton("AuraHarvestButton", 3, 152, 42, "🌾", C
 end)
 RunService.RenderStepped:Connect(function() updateToggleVisual(HarvestBtn, HARVEST_CONFIG.Enabled) end)
 
-local WATER_CONFIG = {Enabled = false}
-local function waterLoop()
-    task.spawn(function()
-        pcall(function() RefillEvent:FireServer() end)
-        while WATER_CONFIG.Enabled do
-            local soils = {}
-            for _, f in pairs(Workspace:GetChildren()) do
-                if f.Name:find("FarmSoils_Plot") then
-                    for _, s in pairs(f:GetChildren()) do
-                        if s:IsA("Model") and s.Name:find("^soil_") and s:GetAttribute("Watered") == false then
-                            table.insert(soils, s:GetAttribute("SoilId") or s.Name)
-                        end
+-- ==========================================
+-- BAGIAN 5B: AUTO WATER (REFILL TIAP 20x SIRAM)
+-- ==========================================
+
+local WATER_CONFIG = {
+    Enabled = false,
+    WaterInterval = 0.1,     -- jeda antar siram
+    RefillEvery = 20,        -- refill tiap 20x siram
+    RefillDelay = 0.8,       -- jeda setelah refill
+    ScanDelay = 0.3,         -- jeda antar scan
+    IdleDelay = 1.0          -- jeda kalau tidak ada plot kering
+}
+
+-- Scan semua soil di FarmSoils_Plot yang belum disiram
+local function scanDrySoils()
+    local dry = {}
+    for _, f in pairs(Workspace:GetChildren()) do
+        if f.Name:find("FarmSoils_Plot") then
+            for _, s in pairs(f:GetChildren()) do
+                if s:IsA("Model") and s.Name:find("^soil_") then
+                    -- Watered == false berarti kering / belum disiram
+                    if s:GetAttribute("Watered") == false then
+                        local id = s:GetAttribute("SoilId") or s.Name
+                        table.insert(dry, id)
                     end
                 end
             end
-            for _, id in ipairs(soils) do
-                pcall(function() WaterEvent:FireServer({SoilId = id}) end)
-                task.wait(0.1)
+        end
+    end
+    return dry
+end
+
+local function waterLoop()
+    task.spawn(function()
+        while WATER_CONFIG.Enabled do
+            -- 1) Cek jumlah plot kering
+            local drySoils = scanDrySoils()
+
+            if #drySoils == 0 then
+                -- Tidak ada plot kering, tunggu lalu scan lagi
+                task.wait(WATER_CONFIG.IdleDelay)
+                continue
             end
-            task.wait(0.5)
+
+            print(string.format("[Water] 💧 Ditemukan %d plot kering", #drySoils))
+
+            -- 2) Refill dulu sebelum mulai menyiram
+            pcall(function() RefillEvent:FireServer() end)
+            task.wait(WATER_CONFIG.RefillDelay)
+
+            -- 3) Siram satu per satu, refill tiap 20x
+            local waterCount = 0
+            for _, soilId in ipairs(drySoils) do
+                if not WATER_CONFIG.Enabled then break end
+
+                pcall(function() WaterEvent:FireServer({SoilId = soilId}) end)
+                waterCount = waterCount + 1
+                print(string.format("[Water] 💧 #%d | %s", waterCount, soilId))
+
+                -- Setiap 20x siram → refill lagi
+                if waterCount % WATER_CONFIG.RefillEvery == 0 then
+                    print(string.format("[Water] 🚰 Refill setelah %d siram", waterCount))
+                    pcall(function() RefillEvent:FireServer() end)
+                    task.wait(WATER_CONFIG.RefillDelay)
+                end
+
+                task.wait(WATER_CONFIG.WaterInterval)
+            end
+
+            -- 4) Setelah semua tersiram, scan lagi untuk memastikan
+            task.wait(WATER_CONFIG.ScanDelay)
         end
     end)
 end
-local WaterBtn = createToggleButton("AuraWaterButton", 3, 199, 42, "💧", Color3.fromRGB(50, 150, 255), Color3.fromRGB(100, 200, 255), function()
-    WATER_CONFIG.Enabled = not WATER_CONFIG.Enabled
-    if WATER_CONFIG.Enabled then waterLoop() end
-end)
+
+local WaterBtn = createToggleButton(
+    "AuraWaterButton", 3, 199, 42, "💧",
+    Color3.fromRGB(50, 150, 255), Color3.fromRGB(100, 200, 255),
+    function()
+        WATER_CONFIG.Enabled = not WATER_CONFIG.Enabled
+        if WATER_CONFIG.Enabled then
+            print("[Water] ✓ AKTIF")
+            waterLoop()
+        else
+            print("[Water] ✗ NONAKTIF")
+        end
+    end
+)
 RunService.RenderStepped:Connect(function() updateToggleVisual(WaterBtn, WATER_CONFIG.Enabled) end)
 
 -- ==========================================
@@ -640,10 +700,13 @@ end
 -- START MESSAGE
 -- ==========================================
 print("════════════════════════════════════════════════")
-print("  🎮 MASTER SCRIPT v11 - CHAMS NOTIF RESTORED")
+print("  🎮 MASTER SCRIPT v12 - WATER REFILL PER 20x")
 print("════════════════════════════════════════════════")
 print("")
-print("🔧 Perbaikan:")
-print("  ✅ Chams HIJAU + Notif Popup + Suara Beep")
-print("  ✅ Teleport, Farm, Livestock tetap berfungsi")
+print("🔧 Perbaikan Auto Water:")
+print("  ✅ Scan jumlah plot kering dulu")
+print("  ✅ Refill sebelum mulai menyiram")
+print("  ✅ Refill otomatis tiap 20x siram")
+print("  ✅ Lanjut siram sampai semua plot tersiram")
+print("  ✅ Chams, Teleport, Farm, Livestock tetap berfungsi")
 print("════════════════════════════════════════════════")
